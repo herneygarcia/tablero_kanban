@@ -4,6 +4,13 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>◈ DERIVA — Tablero Kanban</title>
+
+  <!-- PWA -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="◈ DERIVA" />
+  <meta name="theme-color" content="#1E3A8A" />
+  <meta name="mobile-web-app-capable" content="yes" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
@@ -313,7 +320,18 @@
     .chip-priority-urgent { background: rgba(220,38,38,.15);  color: #991B1B; }
     .chip-date { background: var(--surface); color: var(--muted); }
     .chip-date.overdue { background: rgba(248,113,113,.15); color: var(--red); }
-    .chip-date.today   { background: rgba(52,211,153,.15); color: var(--green); }
+    .chip-date.today   { background: rgba(5,150,105,.2); color: #065F46; font-weight: 700; }
+
+    /* Tarjeta con vencimiento hoy */
+    @keyframes today-pulse {
+      0%   { box-shadow: 0 0 0 0 rgba(5,150,105,.4), -3px 0 0 0 var(--green); }
+      70%  { box-shadow: 0 0 0 6px rgba(5,150,105,0), -3px 0 0 0 var(--green); }
+      100% { box-shadow: 0 0 0 0 rgba(5,150,105,0), -3px 0 0 0 var(--green); }
+    }
+    .card.due-today {
+      border-left-color: var(--green) !important;
+      animation: today-pulse 2s ease-out infinite;
+    }
     .chip-notes { background: var(--surface); color: var(--muted); }
     .card-del {
       position: absolute;
@@ -574,6 +592,82 @@
     }
     .btn-danger:hover { background: rgba(248,113,113,.25); }
 
+    /* ── Alerta diaria ── */
+    #daily-alert {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(26,19,64,.4);
+      backdrop-filter: blur(6px);
+      z-index: 150;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    #daily-alert.open { display: flex; }
+    #daily-alert-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      width: 100%;
+      max-width: 420px;
+      overflow: hidden;
+    }
+    #daily-alert-header {
+      background: linear-gradient(135deg, #059669, #065F46);
+      padding: 18px 20px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    #daily-alert-header .alert-icon { font-size: 24px; }
+    #daily-alert-header h2 {
+      font-family: var(--font-d);
+      font-size: 16px;
+      font-weight: 700;
+      color: #fff;
+      flex: 1;
+    }
+    #daily-alert-header p { font-size: 12px; color: rgba(255,255,255,.75); margin-top: 2px; }
+    #daily-alert-list {
+      padding: 16px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+    .alert-card-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      background: var(--surface2);
+      border-radius: var(--radius);
+      border-left: 3px solid var(--green);
+    }
+    .alert-card-item .alert-col-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .alert-card-item .alert-card-title {
+      flex: 1;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .alert-card-item .alert-card-col {
+      font-size: 11px;
+      color: var(--muted);
+    }
+    #daily-alert-footer {
+      padding: 14px 20px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: flex-end;
+    }
+
     /* ── Toast ── */
     #toast {
       position: fixed;
@@ -694,6 +788,23 @@
     <div class="confirm-actions">
       <button class="btn-secondary" id="btn-confirm-cancel">Cancelar</button>
       <button class="btn-danger" id="btn-confirm-ok">Eliminar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Alerta diaria -->
+<div id="daily-alert">
+  <div id="daily-alert-box">
+    <div id="daily-alert-header">
+      <span class="alert-icon">📋</span>
+      <div>
+        <h2 id="daily-alert-title">Tarjetas para hoy</h2>
+        <p id="daily-alert-subtitle"></p>
+      </div>
+    </div>
+    <div id="daily-alert-list"></div>
+    <div id="daily-alert-footer">
+      <button class="btn-primary" id="btn-close-alert">Entendido</button>
     </div>
   </div>
 </div>
@@ -939,6 +1050,7 @@ function render() {
       cardEl.className = 'card';
       cardEl.dataset.cardId = card.id;
       cardEl.dataset.priority = card.priority;
+      if (card.dueDate === todayISO()) cardEl.classList.add('due-today');
       cardEl.draggable = true;
       const noteCount = (card.notes || []).length;
       cardEl.innerHTML = `
@@ -1238,10 +1350,42 @@ document.addEventListener('keydown', e => {
 });
 
 /* ════════════════════════════════════════════
+   Alerta diaria
+════════════════════════════════════════════ */
+document.getElementById('btn-close-alert').onclick = () => {
+  document.getElementById('daily-alert').classList.remove('open');
+};
+
+function checkDailyAlert() {
+  const today = todayISO();
+  const dueToday = state.cards.filter(c => c.dueDate === today);
+  if (!dueToday.length) return;
+
+  const subtitle = dueToday.length === 1
+    ? '1 tarjeta vence hoy'
+    : `${dueToday.length} tarjetas vencen hoy`;
+  document.getElementById('daily-alert-subtitle').textContent = subtitle;
+
+  const list = document.getElementById('daily-alert-list');
+  list.innerHTML = dueToday.map(card => {
+    const col = state.columns.find(c => c.id === card.columnId);
+    return `
+      <div class="alert-card-item">
+        <span class="alert-col-dot" style="background:${col ? col.color : '#6D28D9'}"></span>
+        <span class="alert-card-title">${escHtml(card.title)}</span>
+        <span class="alert-card-col">${col ? escHtml(col.title) : ''}</span>
+      </div>`;
+  }).join('');
+
+  document.getElementById('daily-alert').classList.add('open');
+}
+
+/* ════════════════════════════════════════════
    Boot
 ════════════════════════════════════════════ */
 updateDateNav();
 render();
+checkDailyAlert();
 </script>
 </body>
 </html>
