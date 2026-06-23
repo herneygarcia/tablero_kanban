@@ -130,6 +130,21 @@
     .date-nav-btn:hover { background: var(--surface2); }
     #date-label { color: var(--muted); min-width: 140px; text-align: center; }
 
+    /* Share btn */
+    #btn-share {
+      display: flex; align-items: center; gap: 6px;
+      padding: 7px 14px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--muted);
+      transition: border-color .15s, color .15s;
+      white-space: nowrap;
+    }
+    #btn-share:hover { border-color: var(--violet); color: var(--violet); }
+
     /* Add column btn */
     #btn-add-col {
       display: flex; align-items: center; gap: 6px;
@@ -276,6 +291,16 @@
       background: rgba(124,58,237,.08);
       height: 60px;
     }
+    .card-touch-ghost {
+      position: fixed;
+      pointer-events: none;
+      opacity: 0.88;
+      z-index: 9999;
+      width: 340px;
+      box-shadow: 0 8px 24px rgba(0,0,0,.3);
+      transform: rotate(2deg);
+    }
+    .card.touch-dragging { opacity: 0.25; }
 
     /* Priority glow */
     .card[data-priority="low"]    { border-left-color: var(--violet); }
@@ -721,6 +746,8 @@
 
     <div class="header-sep"></div>
 
+    <button id="btn-share">⬆ Compartir</button>
+
     <button id="btn-add-col">
       <span style="font-size:16px;">+</span> Columna
     </button>
@@ -835,6 +862,8 @@ let confirmCallback = null;
 let dragCardId = null;
 let dragSourceColId = null;
 let dragPlaceholder = null;
+let touchDragId = null;
+let touchGhost  = null;
 let pendingNotes = [];
 
 /* ════════════════════════════════════════════
@@ -1087,6 +1116,56 @@ function render() {
         removePlaceholder();
         dragCardId = null;
         dragSourceColId = null;
+      });
+
+      // Touch drag & drop
+      cardEl.addEventListener('touchstart', e => {
+        if (e.touches.length > 1) return;
+        touchDragId = card.id;
+        const t = e.touches[0];
+        touchGhost = cardEl.cloneNode(true);
+        touchGhost.className = 'card card-touch-ghost';
+        const rect = cardEl.getBoundingClientRect();
+        touchGhost.style.width = rect.width + 'px';
+        touchGhost.style.left  = t.clientX - rect.width / 2 + 'px';
+        touchGhost.style.top   = t.clientY - 30 + 'px';
+        document.body.appendChild(touchGhost);
+        cardEl.classList.add('touch-dragging');
+      }, { passive: true });
+
+      cardEl.addEventListener('touchmove', e => {
+        if (!touchGhost) return;
+        e.preventDefault();
+        const t = e.touches[0];
+        touchGhost.style.left = t.clientX - touchGhost.offsetWidth / 2 + 'px';
+        touchGhost.style.top  = t.clientY - 30 + 'px';
+        touchGhost.style.display = 'none';
+        const elUnder = document.elementFromPoint(t.clientX, t.clientY);
+        touchGhost.style.display = '';
+        document.querySelectorAll('.column').forEach(c => c.classList.remove('drag-over'));
+        const colUnder = elUnder && elUnder.closest('.column');
+        if (colUnder) colUnder.classList.add('drag-over');
+      }, { passive: false });
+
+      cardEl.addEventListener('touchend', e => {
+        if (!touchGhost || !touchDragId) return;
+        const t = e.changedTouches[0];
+        touchGhost.style.display = 'none';
+        const elUnder = document.elementFromPoint(t.clientX, t.clientY);
+        touchGhost.remove();
+        touchGhost = null;
+        document.querySelectorAll('.column').forEach(c => c.classList.remove('drag-over'));
+        const colUnder = elUnder && elUnder.closest('.column');
+        const id = touchDragId;
+        touchDragId = null;
+        if (colUnder) {
+          const newColId = colUnder.dataset.colId;
+          const movedCard = state.cards.find(c => c.id === id);
+          if (movedCard) { movedCard.columnId = newColId; save(); render(); }
+        } else {
+          const el = document.querySelector(`[data-card-id="${id}"]`);
+          if (el) el.classList.remove('touch-dragging');
+        }
       });
 
       list.appendChild(cardEl);
@@ -1350,6 +1429,20 @@ document.addEventListener('keydown', e => {
 });
 
 /* ════════════════════════════════════════════
+   Compartir tablero por URL
+════════════════════════════════════════════ */
+function shareState() {
+  const encoded = btoa(encodeURIComponent(JSON.stringify(state)));
+  const url = location.origin + location.pathname + '#s=' + encoded;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(url).then(() => showToast('Enlace copiado — ábrelo en otro dispositivo'));
+  } else {
+    prompt('Copia este enlace:', url);
+  }
+}
+document.getElementById('btn-share').addEventListener('click', shareState);
+
+/* ════════════════════════════════════════════
    Alerta diaria
 ════════════════════════════════════════════ */
 document.getElementById('btn-close-alert').onclick = () => {
@@ -1383,6 +1476,19 @@ function checkDailyAlert() {
 /* ════════════════════════════════════════════
    Boot
 ════════════════════════════════════════════ */
+(function loadFromUrl() {
+  const hash = location.hash;
+  if (!hash.startsWith('#s=')) return;
+  try {
+    const loaded = JSON.parse(decodeURIComponent(atob(hash.slice(3))));
+    if (loaded && Array.isArray(loaded.columns) && Array.isArray(loaded.cards)) {
+      state = loaded;
+      save();
+      history.replaceState(null, '', location.pathname);
+      showToast('Tablero importado correctamente');
+    }
+  } catch(e) {}
+})();
 updateDateNav();
 render();
 checkDailyAlert();
